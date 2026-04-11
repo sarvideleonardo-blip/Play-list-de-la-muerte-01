@@ -3,10 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import { Music, LogOut, User, Search, PlayCircle, Loader2, Plus, Trash2, Copy, CheckCircle2, ExternalLink } from 'lucide-react';
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL || '',
-  import.meta.env.VITE_SUPABASE_ANON_KEY || ''
-);
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim();
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
+const SUPABASE_CONFIG_ERROR = !SUPABASE_URL || !SUPABASE_ANON_KEY
+  ? 'Faltan variables de entorno de Supabase (VITE_SUPABASE_URL y/o VITE_SUPABASE_ANON_KEY).'
+  : null;
+const supabase = SUPABASE_CONFIG_ERROR ? null : createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const SPOTIFY_URL_REGEX = /^https?:\/\/(open\.)?spotify\.com\/(track|album|playlist|episode)\/[A-Za-z0-9]+(?:\?.*)?$/i;
 
 type View = 'landing' | 'auth' | 'dashboard' | 'explore' | 'activate';
 
@@ -18,6 +21,12 @@ function App() {
   const [songs, setSongs] = useState<any[]>([]);
 
   useEffect(() => {
+    if (!supabase) {
+      toast.error(SUPABASE_CONFIG_ERROR);
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
@@ -34,6 +43,8 @@ function App() {
   }, [user]);
 
   const fetchProfile = async () => {
+    if (!supabase || !user?.id) return;
+
     const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
     if (data) {
       setProfile(data);
@@ -52,8 +63,16 @@ function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <Header user={user} view={view} setView={setView} onLogout={() => supabase.auth.signOut()} />
+      <Header user={user} view={view} setView={setView} onLogout={() => supabase?.auth.signOut()} />
       <main>
+        {SUPABASE_CONFIG_ERROR && (
+          <div className="max-w-2xl mx-auto py-12 px-4">
+            <div className="bg-red-500/10 border border-red-500/30 text-red-200 rounded-lg p-6">
+              <h2 className="text-xl font-semibold mb-2">Configuración incompleta</h2>
+              <p>{SUPABASE_CONFIG_ERROR}</p>
+            </div>
+          </div>
+        )}
         {view === 'landing' && <LandingPage onCreate={() => setView('auth')} onExplore={() => setView('explore')} />}
         {view === 'auth' && <AuthForm onSuccess={() => setView('dashboard')} onCancel={() => setView('landing')} />}
         {view === 'dashboard' && user && <Dashboard userId={user.id} profile={profile} songs={songs} refresh={fetchProfile} />}
@@ -120,6 +139,10 @@ function AuthForm({ onSuccess, onCancel }: any) {
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
+    if (!supabase) {
+      toast.error('Supabase no está configurado.');
+      return;
+    }
     if (!email || !fullName || !accepted) return;
     setLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
@@ -180,13 +203,27 @@ function Dashboard({ userId, profile, songs, refresh }: any) {
   const [copied, setCopied] = useState(false);
 
   const addSong = async () => {
+    if (!supabase) {
+      toast.error('Supabase no está configurado.');
+      return;
+    }
+
     if (!url || !name || !artist || !position) return;
+    if (!SPOTIFY_URL_REGEX.test(url.trim())) {
+      toast.error('La URL debe ser un enlace válido de Spotify.');
+      return;
+    }
+    if (position < 1 || position > 30) {
+      toast.error('La posición debe estar entre 1 y 30.');
+      return;
+    }
+
     const { error } = await supabase.from('songs').insert({
       profile_id: userId,
       position,
-      spotify_url: url,
-      song_name: name,
-      artist,
+      spotify_url: url.trim(),
+      song_name: name.trim(),
+      artist: artist.trim(),
     });
     if (error) toast.error(error.message);
     else {
@@ -197,6 +234,7 @@ function Dashboard({ userId, profile, songs, refresh }: any) {
   };
 
   const deleteSong = async (pos: number) => {
+    if (!supabase) return;
     const song = songs.find((s: any) => s.position === pos);
     if (!song) return;
     await supabase.from('songs').delete().eq('id', song.id);
@@ -205,6 +243,7 @@ function Dashboard({ userId, profile, songs, refresh }: any) {
   };
 
   const saveMessage = async () => {
+    if (!supabase) return;
     await supabase.from('profiles').update({ final_message: message }).eq('id', userId);
     toast.success('Mensaje guardado');
   };
@@ -235,7 +274,18 @@ function Dashboard({ userId, profile, songs, refresh }: any) {
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
           <h3 className="font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-emerald-500" /> Agregar canción</h3>
           <div className="grid sm:grid-cols-4 gap-4 mb-4">
-            <select value={position || ''} onChange={(e) => setPosition(Number(e.target.value))} className="px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg">
+            <select
+              value={position || ''}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (!value) {
+                  setPosition(null);
+                  return;
+                }
+                setPosition(Math.max(1, Math.min(30, value)));
+              }}
+              className="px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg"
+            >
               <option value="">Posición</option>
               {Array.from({ length: 30 }, (_, i) => i + 1).map((pos) => {
                 const occupied = songs.some((s: any) => s.position === pos);
@@ -309,10 +359,15 @@ function ExplorePage({ onBack }: any) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     fetchPlaylists();
   }, []);
 
   const fetchPlaylists = async () => {
+    if (!supabase) return;
     const { data } = await supabase.from('legados_public').select('*').order('activated_at', { ascending: false });
     if (data) {
       const withSongs = await Promise.all(data.map(async (legado: any) => {
@@ -353,12 +408,16 @@ function ActivatePage({ onBack }: any) {
   const [result, setResult] = useState<any>(null);
 
   const activate = async () => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      toast.error('Supabase no está configurado.');
+      return;
+    }
     if (code.length !== 8) return;
     setLoading(true);
-    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/activate`, {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/activate`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ code: code.toUpperCase() }),
