@@ -13,6 +13,20 @@ const SPOTIFY_URL_REGEX = /^https?:\/\/(open\.)?spotify\.com\/(track|album|playl
 
 type View = 'landing' | 'auth' | 'dashboard' | 'explore' | 'activate';
 
+function getAuthErrorMessage(rawMessage: string) {
+  const message = rawMessage.toLowerCase();
+  if (message.includes('email rate limit exceeded') || message.includes('rate limit')) {
+    return 'Demasiados intentos. Espera un minuto y vuelve a intentar.';
+  }
+  if (message.includes('signup is disabled') || message.includes('email signups are disabled')) {
+    return 'El registro por correo está deshabilitado en Supabase. Activa "Enable email signups".';
+  }
+  if (message.includes('invalid login credentials')) {
+    return 'No se pudo validar el correo. Revisa que esté bien escrito e inténtalo otra vez.';
+  }
+  return rawMessage;
+}
+
 function App() {
   const [view, setView] = useState<View>('landing');
   const [user, setUser] = useState<any>(null);
@@ -31,9 +45,14 @@ function App() {
       setUser(session?.user ?? null);
       setLoading(false);
     });
-    supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) setView('dashboard');
     });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -74,7 +93,7 @@ function App() {
           </div>
         )}
         {view === 'landing' && <LandingPage onCreate={() => setView('auth')} onExplore={() => setView('explore')} />}
-        {view === 'auth' && <AuthForm onSuccess={() => setView('dashboard')} onCancel={() => setView('landing')} />}
+        {view === 'auth' && <AuthForm onCancel={() => setView('landing')} />}
         {view === 'dashboard' && user && <Dashboard userId={user.id} profile={profile} songs={songs} refresh={fetchProfile} />}
         {view === 'explore' && <ExplorePage onBack={() => setView('landing')} />}
         {view === 'activate' && <ActivatePage onBack={() => setView('landing')} />}
@@ -130,28 +149,79 @@ function LandingPage({ onCreate, onExplore }: any) {
   );
 }
 
-function AuthForm({ onSuccess, onCancel }: any) {
+function AuthForm({ onCancel }: any) {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [accepted, setAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [lastEmailAttempt, setLastEmailAttempt] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timeout = window.setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [resendCooldown]);
+
+  const sendMagicLink = async (emailToUse: string, nameToUse: string) => {
+    if (!supabase) {
+      toast.error('Supabase no está configurado.');
+      return false;
+    }
+
+    setLoading(true);
+    const { data, error } = await supabase.auth.signInWithOtp({
+      email: emailToUse,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: window.location.origin,
+        data: { full_name: nameToUse },
+      },
+    });
+    setLoading(false);
+    if (error) {
+      toast.error(getAuthErrorMessage(error.message));
+      return false;
+    }
+
+    const identities = (data?.user as any)?.identities;
+    const looksLikeObfuscatedUser = Array.isArray(identities) && identities.length === 0;
+    if (looksLikeObfuscatedUser) {
+      toast.error('No se pudo crear la cuenta. Activa "Enable email signups" en Supabase Auth.');
+      return false;
+    }
+
+    setLastEmailAttempt(emailToUse);
+    setResendCooldown(60);
+    setSent(true);
+    toast.success('Solicitud enviada. Revisa tu correo en 1-2 minutos.');
+    return true;
+  };
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
-    if (!supabase) {
-      toast.error('Supabase no está configurado.');
+    if (!email || !fullName || !accepted) return;
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedName = fullName.trim();
+    if (!normalizedEmail || !normalizedName) {
+      toast.error('Completa tu nombre y correo.');
       return;
     }
-    if (!email || !fullName || !accepted) return;
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin, data: { full_name: fullName } },
-    });
-    setLoading(false);
-    if (error) toast.error(error.message);
-    else setSent(true);
+
+    await sendMagicLink(normalizedEmail, normalizedName);
+  };
+
+  const handleResend = async () => {
+    if (resendCooldown > 0 || !lastEmailAttempt) return;
+    const normalizedName = fullName.trim();
+    if (!normalizedName) {
+      toast.error('Vuelve atrás y agrega tu nombre para reenviar el enlace.');
+      setSent(false);
+      return;
+    }
+    await sendMagicLink(lastEmailAttempt, normalizedName);
   };
 
   if (sent) {
@@ -160,7 +230,18 @@ function AuthForm({ onSuccess, onCancel }: any) {
         <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-lg p-8 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold mb-2">¡Revisa tu correo!</h2>
-          <p className="text-zinc-400 mb-6">Hemos enviado un enlace mágico a {email}</p>
+          <p className="text-zinc-400 mb-3">Hemos enviado un enlace mágico a {lastEmailAttempt}</p>
+          <p className="text-xs text-zinc-500 mb-6 text-left bg-zinc-800/70 border border-zinc-700 rounded-lg p-3">
+            Si no llega en 1-2 minutos, revisa Spam/Promociones y confirma en Supabase Auth que está habilitado Email Provider, SMTP y
+            "Enable email signups".
+          </p>
+          <button
+            onClick={handleResend}
+            disabled={loading || resendCooldown > 0}
+            className="w-full py-3 mb-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg"
+          >
+            {resendCooldown > 0 ? `Reenviar en ${resendCooldown}s` : (loading ? 'Enviando...' : 'Reenviar enlace')}
+          </button>
           <button onClick={onCancel} className="w-full py-3 border border-zinc-700 rounded-lg">Volver al inicio</button>
         </div>
       </div>
