@@ -7,6 +7,7 @@ import {
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim();
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
+const hasSupabaseConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 function createSpeechRecognition() {
   if (typeof window === 'undefined') return null;
@@ -43,7 +44,7 @@ interface LegacyPublic {
   personal_fragments: Record<string, string> | null;
 }
 
-const supabase = createClient(SUPABASE_URL || '', SUPABASE_ANON_KEY || '');
+const supabase = hasSupabaseConfig ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const TESTIMONY_PROMPTS: { key: string; label: string; placeholder: string; maxLength: number }[] = [
   { key: 'regret', label: 'Una cosa que no hiciste y te hubiera gustado', placeholder: 'Si pudiera volver atrás...', maxLength: 280 },
@@ -88,6 +89,10 @@ export default function App() {
   const [exploreLoading, setExploreLoading] = useState(false);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
@@ -99,7 +104,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !supabase) return;
     fetchSongs();
     fetchProfile();
   }, [user]);
@@ -119,6 +124,7 @@ export default function App() {
   }, [profile?.final_message, profile?.personal_fragments]);
 
   async function fetchSongs() {
+    if (!supabase) return;
     const { data, error } = await supabase
       .from('songs')
       .select('*')
@@ -129,6 +135,7 @@ export default function App() {
   }
 
   async function fetchProfile() {
+    if (!supabase) return;
     const { data, error } = await supabase
       .from('profiles')
       .select('id, final_message, personal_fragments, status, activated_at')
@@ -143,6 +150,10 @@ export default function App() {
 
   async function addSong(e: React.FormEvent) {
     e.preventDefault();
+    if (!supabase) {
+      toast.error('Falta configuración de Supabase');
+      return;
+    }
     if (!name.trim() || !artist.trim()) {
       toast.error('Nombre y artista son obligatorios');
       return;
@@ -167,6 +178,7 @@ export default function App() {
   }
 
   async function deleteSong(id: string) {
+    if (!supabase) return;
     setDeletingId(id);
     const { error } = await supabase.from('songs').delete().eq('id', id).eq('profile_id', user.id);
     setDeletingId(null);
@@ -178,7 +190,7 @@ export default function App() {
   }
 
   async function saveMessage() {
-    if (!user) return;
+    if (!user || !supabase) return;
     setSavingMessage(true);
     const { error } = await supabase
       .from('profiles')
@@ -238,6 +250,7 @@ export default function App() {
   }
 
   async function fetchLegacies() {
+    if (!supabase) return;
     setExploreLoading(true);
     const { data, error } = await supabase
       .from('legacies_public')
@@ -252,11 +265,16 @@ export default function App() {
   }
 
   async function signIn() {
+    if (!supabase) {
+      toast.error('Falta configuración de Supabase');
+      return;
+    }
     const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
     if (error) toast.error('Error al iniciar sesión');
   }
 
   async function signOut() {
+    if (!supabase) return;
     await supabase.auth.signOut();
     setUser(null);
     setSongs([]);
@@ -276,6 +294,25 @@ export default function App() {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+      </div>
+    );
+  }
+
+  if (!hasSupabaseConfig) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+        <div className="max-w-xl text-center space-y-4">
+          <Music className="w-10 h-10 text-emerald-500 mx-auto" />
+          <h1 className="text-2xl font-bold">Configuración requerida</h1>
+          <p className="text-zinc-400">
+            Faltan las variables de entorno de Supabase. Creá un archivo <code className="bg-zinc-900 px-2 py-1 rounded">.env</code> en la raíz con:
+          </p>
+          <pre className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-left text-sm text-zinc-300">
+            VITE_SUPABASE_URL=tu_url
+            VITE_SUPABASE_ANON_KEY=tu_key
+          </pre>
+          <p className="text-zinc-500 text-sm">Luego reiniciá el servidor con <code className="bg-zinc-900 px-2 py-1 rounded">npm run dev</code>.</p>
+        </div>
       </div>
     );
   }
