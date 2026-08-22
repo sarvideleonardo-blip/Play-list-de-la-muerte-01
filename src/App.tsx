@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import {
-  Music, LogOut, User, Search, PlayCircle, Loader2, Plus, Trash2, Copy, CheckCircle2, ExternalLink, Mic, MicOff, Save, BookOpen, Sparkles
+  Music, LogOut, User, Search, PlayCircle, Loader2, Plus, Trash2, Copy, CheckCircle2, ExternalLink, Mic, MicOff, Save, BookOpen, Sparkles, ListPlus
 } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -92,6 +92,69 @@ async function fetchSongFromLink(url: string): Promise<SongMeta | null> {
   return null;
 }
 
+interface ParsedSong {
+  name: string;
+  artist: string;
+}
+
+// Convierte texto pegado (una canción por línea) en lista de canciones.
+// Soporta: "Artista - Título", "Título - Artista", listas numeradas/viñetas,
+// M3U (#EXTINF) y JSON [{name, artist}].
+function parseSongList(text: string): ParsedSong[] {
+  const t = text.trim();
+  if (!t) return [];
+
+  // JSON
+  if (t.startsWith('[') || t.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(t);
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      const out: ParsedSong[] = [];
+      for (const item of arr) {
+        if (item && typeof item === 'object') {
+          const name = item.name || item.title || item.track || '';
+          const artist = item.artist || item.artists || item.author || '';
+          if (name) out.push({ name: String(name).trim(), artist: String(artist).trim() });
+        }
+      }
+      if (out.length) return out;
+    } catch {
+      // no es JSON válido, seguimos línea a línea
+    }
+  }
+
+  const out: ParsedSong[] = [];
+  const lines = t.split(/\r?\n/);
+  for (const raw of lines) {
+    let line = raw.trim();
+    if (!line) continue;
+    if (/^#EXTM3U/i.test(line)) continue;
+    if (/^#EXTINF/i.test(line)) {
+      const m = line.match(/^#EXTINF:[^,]*,(.+)$/);
+      if (m) line = m[1].trim();
+      else continue;
+    }
+    line = line.replace(/^[\s]*(\d+[.)]|\d+\s+|[-•*·]\s*)+/, '');
+    line = line.replace(/^["']|["']$/g, '').replace(/,\s*$/, '');
+    if (!line) continue;
+
+    let sepIdx = -1;
+    let sepLen = 0;
+    for (const sep of [' — ', ' – ', ' - ', '\t']) {
+      const i = line.indexOf(sep);
+      if (i > 0) { sepIdx = i; sepLen = sep.length; break; }
+    }
+    if (sepIdx > 0) {
+      const left = line.slice(0, sepIdx).trim();
+      const right = line.slice(sepIdx + sepLen).trim();
+      out.push({ name: right, artist: left });
+    } else {
+      out.push({ name: line, artist: '' });
+    }
+  }
+  return out;
+}
+
 const TESTIMONY_PROMPTS: { key: string; label: string; placeholder: string; maxLength: number }[] = [
   { key: 'regret', label: 'Una cosa que no hiciste y te hubiera gustado', placeholder: 'Si pudiera volver atrás...', maxLength: 280 },
   { key: 'joy', label: 'Un momento de pura alegría', placeholder: 'Recuerdo cuando...', maxLength: 280 },
@@ -120,6 +183,10 @@ export default function App() {
   const [link, setLink] = useState('');
   const [adding, setAdding] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importParsed, setImportParsed] = useState<ParsedSong[]>([]);
+  const [importing, setImporting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -251,6 +318,33 @@ export default function App() {
     else {
       toast.success('Canción eliminada');
       setSongs((prev) => prev.filter((s) => s.id !== id));
+    }
+  }
+
+  function swapParsed() {
+    setImportParsed((prev) => prev.map((s) => ({ name: s.artist, artist: s.name })));
+  }
+
+  async function runImport() {
+    if (!supabase) {
+      toast.error('Falta configuración de Supabase');
+      return;
+    }
+    const rows = importParsed
+      .filter((s) => s.name.trim())
+      .map((s) => ({ profile_id: user.id, name: s.name.trim(), artist: s.artist.trim(), link: null }));
+    if (!rows.length) return;
+    setImporting(true);
+    const { error } = await supabase.from('songs').insert(rows);
+    setImporting(false);
+    if (error) {
+      toast.error('Error al importar la lista');
+    } else {
+      toast.success(`${rows.length} canciones agregadas`);
+      setImportOpen(false);
+      setImportText('');
+      setImportParsed([]);
+      fetchSongs();
     }
   }
 
@@ -582,10 +676,20 @@ export default function App() {
 
             {/* Canciones */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <Music className="w-5 h-5 text-emerald-500" />
-                Tu playlist
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                  <Music className="w-5 h-5 text-emerald-500" />
+                  Tu playlist
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                  disabled={profile?.status === 'dead'}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-700 text-zinc-300 hover:text-emerald-300 hover:border-emerald-500/50 transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ListPlus className="w-3.5 h-3.5" /> Importar lista
+                </button>
+              </div>
 
               <form onSubmit={addSong} className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                 <div className="md:col-span-1 relative">
@@ -784,6 +888,63 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {importOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setImportOpen(false)}>
+          <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <ListPlus className="w-5 h-5 text-emerald-500" /> Importar lista
+              </h3>
+              <button type="button" onClick={() => setImportOpen(false)} className="text-zinc-500 hover:text-zinc-300 text-xl leading-none">✕</button>
+            </div>
+            <p className="text-xs text-zinc-400 mb-3">
+              Pega tu lista — una canción por línea, formato <code className="text-emerald-300">Artista - Título</code>.
+              También entiendo listas numeradas, M3U y JSON. ¿Tu lista está al revés? Usa «Invertir».
+            </p>
+            <textarea
+              value={importText}
+              onChange={(e) => { setImportText(e.target.value); setImportParsed(parseSongList(e.target.value)); }}
+              placeholder={"Ej:\nRadiohead - Creep\nNatalia Lafourcade - Hasta la Raíz\nArctic Monkeys - Do I Wanna Know?"}
+              rows={8}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 resize-y"
+            />
+            {importParsed.length > 0 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-zinc-400">{importParsed.length} canciones detectadas</span>
+                  <button type="button" onClick={swapParsed} className="text-xs text-emerald-400 hover:text-emerald-300">Invertir Artista ⇄ Título</button>
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 divide-y divide-zinc-800">
+                  {importParsed.slice(0, 30).map((s, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                      <span className="text-zinc-600 text-xs w-5 shrink-0">{i + 1}.</span>
+                      <span className="text-emerald-300 truncate">{s.name}</span>
+                      {s.artist && <span className="text-zinc-500 truncate">— {s.artist}</span>}
+                    </div>
+                  ))}
+                  {importParsed.length > 30 && <div className="px-3 py-1.5 text-xs text-zinc-500">…y {importParsed.length - 30} más</div>}
+                </div>
+              </div>
+            )}
+            {importText.trim() && importParsed.length === 0 && (
+              <p className="mt-3 text-xs text-amber-400">No detecté canciones. Revisa el formato: una por línea, «Artista - Título».</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button type="button" onClick={() => setImportOpen(false)} className="px-4 py-2 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800 transition">Cancelar</button>
+              <button
+                type="button"
+                onClick={runImport}
+                disabled={importParsed.length === 0 || importing}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-xl text-sm font-semibold transition flex items-center gap-2"
+              >
+                {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {importing ? 'Importando...' : `Agregar ${importParsed.length} canciones`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
