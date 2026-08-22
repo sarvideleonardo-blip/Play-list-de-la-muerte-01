@@ -898,9 +898,11 @@ export default function App() {
               </h3>
               <button type="button" onClick={() => setImportOpen(false)} className="text-zinc-500 hover:text-zinc-300 text-xl leading-none">✕</button>
             </div>
-            <p className="text-xs text-zinc-400 mb-3">
-              Pega tu lista — una canción por línea, formato <code className="text-emerald-300">Artista - Título</code>.
-              También entiendo listas numeradas, M3U y JSON. ¿Tu lista está al revés? Usa «Invertir».
+            <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+              Pega tu lista — una canción por línea, formato <code className="text-emerald-300">Artista - Título</code>.<br/>
+              ¿La tienes en Spotify, Apple Music u otro servicio? Copia tu playlist, pégala en <b className="text-zinc-200">cualquier IA</b> y pídele:
+              <span className="text-zinc-200"> «conviértela a "Artista - Título", una por línea»</span>. Pega aquí el resultado.<br/>
+              También entiendo listas numeradas, M3U y JSON; si tu lista está al revés, usa <b className="text-emerald-300">Invertir</b>.
             </p>
             <textarea
               value={importText}
