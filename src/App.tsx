@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Toaster, toast } from 'sonner';
 import {
-  Music, LogOut, User, Search, PlayCircle, Loader2, Plus, Trash2, Copy, CheckCircle2, ExternalLink, Mic, MicOff, Save, BookOpen
+  Music, LogOut, User, Search, PlayCircle, Loader2, Plus, Trash2, Copy, CheckCircle2, ExternalLink, Mic, MicOff, Save, BookOpen, Sparkles
 } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -46,6 +46,52 @@ interface LegacyPublic {
 
 const supabase = hasSupabaseConfig ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+interface SongMeta {
+  name: string;
+  artist: string;
+}
+
+// Autollenado desde enlace (Spotify / YouTube / Apple Music / SoundCloud).
+// Usa oEmbed + iTunes lookup: sin API key, sin backend, CORS abierto.
+async function fetchSongFromLink(url: string): Promise<SongMeta | null> {
+  const u = url.trim();
+  if (!u) return null;
+  try {
+    if (/(open\.spotify\.com|spotify\.link)/i.test(u)) {
+      const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(u)}`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (d?.title) return { name: d.title, artist: d.author_name || '' };
+    }
+    if (/(youtube\.com|youtu\.be)/i.test(u)) {
+      const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(u)}&format=json`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (d?.title) return { name: d.title, artist: d.author_name || '' };
+    }
+    if (/soundcloud\.com/i.test(u)) {
+      const res = await fetch(`https://soundcloud.com/oembed?url=${encodeURIComponent(u)}&format=json`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (d?.title) return { name: d.title, artist: d.author_name || '' };
+    }
+    if (/(music\.apple\.com|itunes\.apple\.com)/i.test(u)) {
+      const m = u.match(/song\/(\d+)/) || u.match(/[?&]i=(\d+)/) || u.match(/(?:^|[/?&])id(\d+)/);
+      if (m) {
+        const res = await fetch(`https://itunes.apple.com/lookup?id=${m[1]}&entity=song`);
+        if (res.ok) {
+          const d = await res.json();
+          const t = d?.results?.[0];
+          if (t?.trackName) return { name: t.trackName, artist: t.artistName || '' };
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 const TESTIMONY_PROMPTS: { key: string; label: string; placeholder: string; maxLength: number }[] = [
   { key: 'regret', label: 'Una cosa que no hiciste y te hubiera gustado', placeholder: 'Si pudiera volver atrás...', maxLength: 280 },
   { key: 'joy', label: 'Un momento de pura alegría', placeholder: 'Recuerdo cuando...', maxLength: 280 },
@@ -73,6 +119,7 @@ export default function App() {
   const [artist, setArtist] = useState('');
   const [link, setLink] = useState('');
   const [adding, setAdding] = useState(false);
+  const [autofilling, setAutofilling] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -145,6 +192,24 @@ export default function App() {
       toast.error('Error al cargar perfil');
     } else {
       setProfile(data as Profile);
+    }
+  }
+
+  async function autoFillFromLink(inputUrl?: string) {
+    const u = (inputUrl ?? link).trim();
+    if (!u) {
+      toast.error('Pegá un enlace primero');
+      return;
+    }
+    setAutofilling(true);
+    const meta = await fetchSongFromLink(u);
+    setAutofilling(false);
+    if (meta) {
+      setName(meta.name);
+      setArtist(meta.artist);
+      toast.success('Nombre y artista llenados desde el enlace');
+    } else {
+      toast.error('No pude leer ese enlace. Probá Spotify, YouTube, Apple Music o SoundCloud');
     }
   }
 
@@ -573,14 +638,27 @@ export default function App() {
                     {dictatingField === 'song_artist' ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                   </button>
                 </div>
-                <div className="md:col-span-1">
+                <div className="md:col-span-1 relative">
                   <input
                     value={link}
                     onChange={(e) => setLink(e.target.value)}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData('text');
+                      if (pasted) setTimeout(() => autoFillFromLink(pasted), 0);
+                    }}
                     disabled={profile?.status === 'dead'}
                     placeholder="Enlace (opcional)"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
+                  <button
+                    type="button"
+                    onClick={() => autoFillFromLink()}
+                    disabled={profile?.status === 'dead' || autofilling}
+                    title="Autollenar desde el enlace"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition text-zinc-500 hover:text-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {autofilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
                 <button
                   type="submit"
