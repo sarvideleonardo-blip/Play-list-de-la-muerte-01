@@ -269,7 +269,7 @@ export default function App() {
       toast.error('Falta configuración de Supabase');
       return;
     }
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
     if (error) toast.error('Error al iniciar sesión');
   }
 
