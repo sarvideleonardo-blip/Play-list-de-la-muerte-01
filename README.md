@@ -45,6 +45,8 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 
 ¡Bienvenido! Hacé un fork, creá una rama y mandá un pull request. Revisá los issues abiertos o proponé algo nuevo.
 
+Lee [CONTRIBUTING.md](CONTRIBUTING.md) para ver cómo ayudar. El borrador de aviso de privacidad y términos está en [docs/legal](docs/legal/borrador-aviso-privacidad-y-terminos.md), pendiente de revisión legal.
+
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).
