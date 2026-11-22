@@ -1,3 +1,5 @@
+🇬🇧 [Read in English](README.en.md)
+
 # Playlist de la Muerte 🎵
 
 Plataforma de legado musical. Armá tu playlist, dejá tu mensaje final y tus fragmentos, y cuando estés listo, **activalo** para que quede público e inmutable.
