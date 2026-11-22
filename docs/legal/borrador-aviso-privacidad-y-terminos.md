@@ -1,3 +1,5 @@
+🇬🇧 [Read in English](borrador-aviso-privacidad-y-terminos.en.md)
+
 # Playlist de la Muerte: borrador de Aviso de Privacidad, Términos y Proceso de activación
 
 **Versión 2. Estado: BORRADOR para revisión.** No es asesoría legal. Antes de publicarlo, conviene que un abogado en México lo revise, sobre todo en lo relativo a datos personales, datos sensibles y datos de terceros. Los campos entre corchetes [así] deben completarse. Los valores marcados como **"Valor prudente (editable)"** son predeterminados que se pueden cambiar en la revisión.
