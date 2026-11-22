@@ -1,3 +1,5 @@
+🇬🇧 [Read in English](CONTRIBUTING.en.md)
+
 # Contribuir a Playlist de la Muerte
 
 Gracias por querer ayudar. Este proyecto toca un tema delicado: la memoria de las personas y su privacidad. Por eso buscamos gente de programación, diseño y privacidad, y también personas con experiencia en duelo, legado digital o derecho.
